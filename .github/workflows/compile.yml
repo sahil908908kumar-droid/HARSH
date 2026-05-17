@@ -1,0 +1,36 @@
+name: Telegram Direct C++ Cloud Compiler
+
+on:
+  repository_dispatch:
+    types: [telegram_trigger]
+
+jobs:
+  cloud_build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code Repository
+      uses: actions/checkout@v3
+
+    - name: Setup Android NDK Environment
+      uses: nndess/setup-ndk@v1
+      with:
+        ndk-version: r25c
+
+    - name: Extract Raw Code From Bot Packet
+      run: |
+        echo "${{ github.event.client_payload.code }}" > main.cpp
+        mkdir -p libs
+
+    - name: Cross-Compile C++ Text to Android Binary
+      run: |
+        $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++ \
+        -shared -fPIC -O3 main.cpp -o libs/libdynamic_bypass.so -llog
+
+    - name: Deploy Compiled Binary to Live Branch
+      run: |
+        git config --global user.name "Cloud-Compiler-Bot"
+        git config --global user.email "compiler@github.com"
+        git add libs/libdynamic_bypass.so
+        git commit -m "Auto Compiled Fresh Code from Telegram" || exit 0
+        git push origin main
+        
