@@ -7,30 +7,61 @@ on:
 jobs:
   cloud_build:
     runs-on: ubuntu-latest
+
     steps:
-    - name: Checkout Code Repository
+    - name: Checkout Repository
       uses: actions/checkout@v3
 
-    - name: Setup Android NDK Environment
-      uses: nndres/setup-ndk@v1
+    - name: Setup Java JDK
+      uses: actions/setup-java@v3
       with:
-        ndk-version: r25c
+        distribution: 'temurin'
+        java-version: '17'
 
-    - name: Extract Raw Code From Bot Packet
+    - name: Install Android NDK
       run: |
-        echo "${{ github.event.client_payload.code }}" > main.cpp
+        sudo apt-get update
+        sudo apt-get install -y wget unzip
+        wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+        unzip -q android-ndk-r25c-linux.zip
+        echo "ANDROID_NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+
+    - name: Write C++ Code From Telegram
+      run: |
+        mkdir -p jni
+        echo '${{ github.event.client_payload.code }}' > jni/main.cpp
+
+    - name: Create Android.mk File
+      run: |
+        cat << 'EOF' > jni/Android.mk
+        LOCAL_PATH := $(call my-dir)
+        include $(CLEAR_VARS)
+        LOCAL_MODULE    := dynamic_bypass
+        LOCAL_SRC_FILES := main.cpp
+        LOCAL_LDLIBS    := -llog
+        include $(BUILD_SHARED_LIBRARY)
+        EOF
+
+    - name: Create Application.mk File
+      run: |
+        cat << 'EOF' > jni/Application.mk
+        APP_ABI := arm64-v8a
+        APP_PLATFORM := android-21
+        APP_STL := c++_static
+        EOF
+
+    - name: Run NDK Build
+      run: |
+        $ANDROID_NDK_HOME/ndk-build
+
+    - name: Commit and Push Compiled Binary
+      run: |
+        git config --global user.name "GitHub Action Bot"
+        git config --global user.email "actions@github.com"
         mkdir -p libs
-
-    - name: Cross-Compile C++ Text to Android Binary
-      run: |
-        $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++ \
-        -shared -fPIC -O3 main.cpp -o libs/libdynamic_bypass.so -llog
-
-    - name: Deploy Compiled Binary to Live Branch
-      run: |
-        git config --global user.name "Cloud-Compiler-Bot"
-        git config --global user.email "compiler@github.com"
-        git add libs/libdynamic_bypass.so
-        git commit -m "Auto Compiled Fresh Code from Telegram" || exit 0
-        git push origin main
-        
+        cp -r obj/local/arm64-v8a/*.so libs/ || cp -r libs/arm64-v8a/*.so libs/ || true
+        git add libs/
+        git commit -m "Compiled .so binary from Telegram update" || echo "No changes to commit"
+        git push
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
